@@ -42,7 +42,7 @@ initialize_arp_table(void)
     for (int i = 0; i < ARP_TABLE_MAX_SIZE; i++) {
         arp_table[i].state = FREE_STATE;
         arp_table[i].source_ip = 0;
-        memset(arp_table[i].source_mac, 0, 6);
+        memset(arp_table[i].source_mac, 0, sizeof(arp_table[i].source_mac));
     }
 }
 
@@ -57,7 +57,7 @@ update_arp_table(struct arp_hdr *arp_header)
         if (entry->state == FREE_STATE)
         {
             entry->source_ip = arp_header->source_ip;
-            memcpy(entry->source_mac, arp_header->source_mac, 6);
+            memcpy(entry->source_mac, arp_header->source_mac, sizeof(entry->source_mac));
             entry->state = DYNAMIC_STATE;
 
             return 0;
@@ -67,7 +67,7 @@ update_arp_table(struct arp_hdr *arp_header)
         {
             if (entry->state == DYNAMIC_STATE)
             {
-                memcpy(entry->source_mac, arp_header->source_mac, 6);
+                memcpy(entry->source_mac, arp_header->source_mac, sizeof(entry->source_mac));
             }
 
             break;
@@ -76,7 +76,7 @@ update_arp_table(struct arp_hdr *arp_header)
 
     if (i == ARP_TABLE_MAX_SIZE) 
     {
-        return -1;
+        return -1; // MYTODO: Replace with a constant
     }
 
     // cprintf("ARP %s: IP=" IP_FMT "  MAC=" MAC_FMT "\n",
@@ -87,6 +87,7 @@ update_arp_table(struct arp_hdr *arp_header)
     return 0;
 }
 
+// MYTODO: Add buf instead of writing directly to arp_header
 int
 arp_reply(struct arp_hdr *arp_header) 
 {
@@ -129,7 +130,7 @@ cprintf("\n");
     {
         cprintf("Error attempting arp response.");
 
-        return -1;
+        return -1; // MYTODO: Replace with a constant
     }
 
     return 0;
@@ -174,7 +175,7 @@ arp_resolve(void* data)
     {
         cprintf("Error! Only ethernet is supporting.");
 
-        // return -E_UNS_ARP_HRDWR_TYPE;
+        return -E_UNS_ARP_HRDWR_TYPE;
     }
 
     if (arp_header->protocol_type != ARP_IPV4) 
@@ -194,7 +195,7 @@ arp_resolve(void* data)
     {
         cprintf("This is not for me!");
 
-        return -1;
+        return -1; // MYTODO: Replace with a constant
     }
 
     if (arp_header->opcode != ARP_REQUEST) 

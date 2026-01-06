@@ -24,6 +24,8 @@ echo "hello jos" | nc -u "192.168.123.2" 8081
 # receive on host
 eth_recv
 
+# icmp from host not implemented
+
 # send from JOS
 udp_send
 # receive on host
