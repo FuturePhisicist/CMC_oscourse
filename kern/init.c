@@ -22,6 +22,7 @@
 // ITASK: Your code here
 #include <kern/pci.h>
 #include <kern/arp.h>
+#include <kern/tcp.h>
 
 void
 timers_init(void) {
@@ -162,6 +163,7 @@ i386_init(void) {
 	// ITASK: Your code here
     pci_init();
     initialize_arp_table();
+    tcp_init_vc();
     assert(false);
 
     /* Choose the timer used for scheduling: hpet or pit */

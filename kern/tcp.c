@@ -63,6 +63,7 @@ tcp_send(struct tcp_virtual_channel* channel, struct tcp_pkt* pkt, size_t length
 struct tcp_virtual_channel *
 match_tcp_vc(struct tcp_pkt *pkt) {
     for (int i = 0; i < TCP_VC_NUM; i++) {
+        cprintf("%x     %x\n", tcp_vc[i].host_side.port, ntohs(pkt->hdr.dst_port));
         if (tcp_vc[i].host_side.port == ntohs(pkt->hdr.dst_port)) {
             return &tcp_vc[i];
         }
@@ -186,11 +187,17 @@ tcp_process(struct tcp_pkt *pkt, uint32_t src_ip, uint16_t tcp_data_len) {
                 struct tcp_pkt data_pkt = {};
                 data_pkt.hdr.data_offset = ((uint8_t)(TCP_HEADER_LEN >> 2) & 0xF);
                 data_pkt.hdr.flags = TH_ACK | TH_PSH | TH_FIN;
-                http_parse((char *)vc->buffer, vc->data_len, (char *)&data_pkt.data, &reply_len);
-                int r = tcp_send(vc, &data_pkt, reply_len);
-                if (r == -1) {
-                    cprintf("tcp send error\n");
-                    goto error;
+                // if ((char) vc->buffer[0] != 'J') {
+                if (strncmp((const char *) vc->buffer, "<!DOCTYPE html>", 15) == 0) {
+                    http_parse((char *)vc->buffer, vc->data_len, (char *)&data_pkt.data, &reply_len);
+                    int r = tcp_send(vc, &data_pkt, reply_len);
+                    if (r == -1) {
+                        cprintf("tcp send error\n");
+                        goto error;
+                    }
+                }
+                else {
+                    cprintf("Raw TCP: %s\n", (char *) vc->buffer);
                 }
                 vc->ack_seq.seq_num += reply_len + 1; // +1 - because of FIN
                 vc->data_len = 0; // because of PSH
