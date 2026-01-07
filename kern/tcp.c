@@ -101,33 +101,35 @@ check_ack_seq(struct tcp_virtual_channel * vc, struct tcp_hdr ack_seq) {
 
 int
 tcp_process(struct tcp_pkt *pkt, uint32_t src_ip, uint16_t tcp_data_len) {
-    // if (trace_packet_processing) cprintf("Processing TCP packet\n");
     struct tcp_virtual_channel * vc = match_tcp_vc(pkt);
     if (vc == NULL) {
         cprintf("No TCP VC match for packet\n");
         goto error;
     }
+
     switch(vc->state) {
     case CLOSED:
-        // not implemented
         cprintf("Unimplemented state - %d\n", vc->state);
         break;
+
     case LISTEN:
         if ((uint32_t)pkt->hdr.flags & TH_SYN) {
             if (match_listen_ip(vc, src_ip)) {
-                // trivial seq num
                 vc->ack_seq.seq_num = ntohl(pkt->hdr.seq_num);
                 vc->guest_side.ip = src_ip;
                 vc->guest_side.port = ntohs(pkt->hdr.src_port);
+
                 vc->ack_seq.ack_num = ntohl(pkt->hdr.seq_num) + 1;
+
+                // send SYN+ACK
                 tcp_send_ack(vc, TH_SYN);
 
                 vc->ack_seq.seq_num++;
                 vc->state = SYN_RECEIVED;
             } else {
-                cprintf("Source IP");
+                cprintf("Source IP ");
                 num2ip(src_ip);
-                cprintf("didn't match listen IP");
+                cprintf(" didn't match listen IP ");
                 num2ip(vc->guest_side.ip);
                 cprintf("\n");
                 goto error;
@@ -137,21 +139,23 @@ tcp_process(struct tcp_pkt *pkt, uint32_t src_ip, uint16_t tcp_data_len) {
             goto error;
         }
         break;
+
     case SYN_SENT:
         cprintf("Unimplemented state - %d\n", vc->state);
         break;
+
     case SYN_RECEIVED:
         if ((uint32_t)pkt->hdr.flags & TH_ACK) {
             if (src_ip != vc->guest_side.ip) {
-                cprintf("Wrong IP -");
+                cprintf("Wrong IP - ");
                 num2ip(src_ip);
-                cprintf(" is not");
+                cprintf(" is not ");
                 num2ip(vc->guest_side.ip);
                 cprintf("\n");
                 goto error;
             }
             if (!check_ack_seq(vc, pkt->hdr)) {
-                cprintf("Wrond ack seq\n");
+                cprintf("Wrong ack seq\n");
                 goto error;
             }
             vc->state = ESTABLISHED;
@@ -160,95 +164,121 @@ tcp_process(struct tcp_pkt *pkt, uint32_t src_ip, uint16_t tcp_data_len) {
             goto error;
         }
         break;
+
     case ESTABLISHED:
+        // If peer closes, handle FIN here (not via PSH)
+        if ((uint32_t)pkt->hdr.flags & TH_FIN) {
+            if (src_ip != vc->guest_side.ip) {
+                cprintf("Wrong IP - ");
+                num2ip(src_ip);
+                cprintf(" is not ");
+                num2ip(vc->guest_side.ip);
+                cprintf("\n");
+                goto error;
+            }
+            if (!((uint32_t)pkt->hdr.flags & TH_ACK)) {
+                cprintf("ACK flag is not provided with FIN\n");
+                goto error;
+            }
+            if (!check_ack_seq(vc, pkt->hdr)) {
+                cprintf("Wrong ack seq\n");
+                goto error;
+            }
+
+            // FIN consumes one sequence number
+            vc->ack_seq.ack_num += 1;
+            tcp_send_ack(vc, 0);
+
+            // Reset for next connection
+            vc->data_len = 0;
+            vc->state = LISTEN;
+            break;
+        }
+
         if ((uint32_t)pkt->hdr.flags & TH_ACK) {
             if (src_ip != vc->guest_side.ip) {
-                cprintf("Wrong IP -");
+                cprintf("Wrong IP - ");
                 num2ip(src_ip);
-                cprintf(" is not");
+                cprintf(" is not ");
                 num2ip(vc->guest_side.ip);
                 cprintf("\n");
                 goto error;
             }
             if (!check_ack_seq(vc, pkt->hdr)) {
-                cprintf("Wrond ack seq\n");
+                cprintf("Wrong ack seq\n");
                 goto error;
             }
-            if (vc->data_len + tcp_data_len >= TCP_WINDOW_SIZE) {
-                cprintf("Buffer overflow\n");
-                goto error;
-            }
-            memcpy((void *)vc->buffer + vc->data_len, (void *)pkt->data, tcp_data_len);
-            vc->data_len += tcp_data_len;
-            vc->ack_seq.ack_num += tcp_data_len;
 
-            if ((uint32_t)pkt->hdr.flags & TH_PSH) {
-                size_t reply_len = 0;
-                struct tcp_pkt data_pkt = {};
-                data_pkt.hdr.data_offset = ((uint8_t)(TCP_HEADER_LEN >> 2) & 0xF);
-                data_pkt.hdr.flags = TH_ACK | TH_PSH | TH_FIN;
-                // if ((char) vc->buffer[0] != 'J') {
-                if (strncmp((const char *) vc->buffer, "<!DOCTYPE html>", 15) == 0) {
-                    http_parse((char *)vc->buffer, vc->data_len, (char *)&data_pkt.data, &reply_len);
-                    int r = tcp_send(vc, &data_pkt, reply_len);
-                    if (r == -1) {
-                        cprintf("tcp send error\n");
-                        goto error;
+            if (tcp_data_len) {
+                if (vc->data_len + tcp_data_len >= TCP_WINDOW_SIZE) {
+                    cprintf("Buffer overflow\n");
+                    goto error;
+                }
+
+                memcpy((void *)vc->buffer + vc->data_len, (void *)pkt->data, tcp_data_len);
+                vc->data_len += tcp_data_len;
+
+                // ACK the received payload bytes
+                vc->ack_seq.ack_num += tcp_data_len;
+
+                // Always ACK received data (PSH is NOT a close signal)
+                tcp_send_ack(vc, 0);
+
+                // Optional: treat PSH as "flush" for your app logic ONLY
+                if ((uint32_t)pkt->hdr.flags & TH_PSH) {
+                    size_t reply_len = 0;
+                    struct tcp_pkt data_pkt = {};
+                    data_pkt.hdr.data_offset = ((uint8_t)(TCP_HEADER_LEN >> 2) & 0xF);
+
+                    // IMPORTANT: do NOT set FIN here
+                    data_pkt.hdr.flags = TH_ACK | TH_PSH;
+
+                    bool is_http(char *data) {
+                        while (*data != 'H') {
+                            ++data;
+                        }
+                        if (strncmp((const char *) data, "HTTP", 4) == 0) {
+                            return true;
+                        }
+                        return false;
                     }
+                    // if (vc->data_len >= 15 &&
+                    //     strncmp((const char *) vc->buffer, "<!DOCTYPE html>", 15) == 0) {
+                    if (is_http((char *) vc->buffer)) {
+                        http_parse((char *)vc->buffer, vc->data_len,
+                                   (char *)&data_pkt.data, &reply_len);
+                        int r = tcp_send(vc, &data_pkt, reply_len);
+                        if (r == -1) {
+                            cprintf("tcp send error\n");
+                            goto error;
+                        }
+                        vc->ack_seq.seq_num += reply_len;
+                    } else {
+                        // safer printing: data is not guaranteed to be NUL-terminated
+                        cprintf("Raw TCP (%u bytes): %.*s\n",
+                                vc->data_len, (int)vc->data_len, (char *)vc->buffer);
+                    }
+
+                    // app "flush"
+                    vc->data_len = 0;
                 }
-                else {
-                    cprintf("Raw TCP: %s\n", (char *) vc->buffer);
-                }
-                vc->ack_seq.seq_num += reply_len + 1; // +1 - because of FIN
-                vc->data_len = 0; // because of PSH
-                vc->state = CLOSE_WAIT;
-            } else if (tcp_data_len) {
-                tcp_send_ack(vc, 0);
             }
+
         } else {
             cprintf("ACK flag is not provided\n");
             goto error;
         }
         break;
+
     case FIN_WAIT_1:
-        cprintf("Unimplemented state - %d\n", vc->state);
-        break;
     case CLOSING:
-        cprintf("Unimplemented state - %d\n", vc->state);
-        break;
     case FIN_WAIT_2:
-        cprintf("Unimplemented state - %d\n", vc->state);
-        break;
     case TIME_WAIT:
-        cprintf("Unimplemented state - %d\n", vc->state);
-        break;
     case CLOSE_WAIT:
-        if ((uint32_t)pkt->hdr.flags & TH_ACK) {
-            if ((uint32_t)pkt->hdr.flags & TH_FIN) {
-                if (src_ip != vc->guest_side.ip) {
-                    cprintf("Wrong IP -");
-                    num2ip(src_ip);
-                    cprintf(" is not");
-                    num2ip(vc->guest_side.ip);
-                    cprintf("\n");
-                    goto error;
-                }
-                if (!check_ack_seq(vc, pkt->hdr)) {
-                    cprintf("Wrond ack seq\n");
-                    goto error;
-                }
-                vc->ack_seq.ack_num += 1; // new ACK answer of zero lenght
-                tcp_send_ack(vc, 0);
-                vc->state = LISTEN;
-            }
-        } else {
-            cprintf("ACK flag is not provided\n");
-            goto error;
-        }
-        break;
     case LAST_ACK:
         cprintf("Unimplemented state - %d\n", vc->state);
         break;
+
     default:
         cprintf("Impossible state - %d\n", vc->state);
         break;
@@ -257,7 +287,7 @@ tcp_process(struct tcp_pkt *pkt, uint32_t src_ip, uint16_t tcp_data_len) {
     return 0;
 
 error:
-    cprintf("Error on state %d\n", vc->state);
+    cprintf("Error on state %d\n", vc ? vc->state : -1);
     return -1;
 }
 
