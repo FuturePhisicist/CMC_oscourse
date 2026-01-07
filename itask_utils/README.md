@@ -10,6 +10,8 @@ chmod +x itask_utils/init_host.sh
 ./itask_utils/init_host.sh
 
 make clean && make qemu # -j 8
+# OR
+make clean && make qemu-nox # -j 8 # to exit: CTRL + a, then x
 
 # To inspect packets (without sudo):
 wireshark dump.dat
@@ -40,6 +42,31 @@ get_arp                 # JOS
 ping 192.168.123.2      # Host
 nc -u -l 1234           # Host
 udp_send                # JOS
+
+# -- To check TCP and HTTP: --
+eth_recv                # JOS
+# Host
+
+# Check TCP
+python3 itask_utils/tcp_tcp.py
+
+# Check HTTP
+python3 itask_utils/tcp_http_check.py
+# 192.168.123.2
+# 80
+# 2
+# any path
+# 2
+# any path
+# ...
+
+# OR
+
+curl -sS -X GET http://192.168.123.2:80/
+
+# OR
+
+# in browser with proxy disabled
 ```
 
 ...
